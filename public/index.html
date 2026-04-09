@@ -6,17 +6,12 @@
     <style>
         body { font-family: -apple-system, sans-serif; background: #e6ebee; margin: 0; height: 100vh; display: flex; flex-direction: column; }
         
-        /* Стили для шапки и статуса */
         header { 
-            background: #0088cc; 
-            color: white; 
-            padding: 10px 15px; 
-            display: flex; 
-            align-items: center; 
-            justify-content: space-between; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            z-index: 10;
+            background: #0088cc; color: white; padding: 10px 15px; 
+            display: flex; align-items: center; justify-content: space-between; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 10;
         }
+        .header-left { display: flex; align-items: center; }
         .status-container { display: flex; align-items: center; font-size: 14px; }
         .status-dot { 
             width: 10px; height: 10px; background: #bbb; 
@@ -25,25 +20,26 @@
         .status-dot.online { background: #4cd137; box-shadow: 0 0 5px #4cd137; }
 
         #messages { list-style-type: none; padding: 15px; margin: 0; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; }
-        #messages li { padding: 10px 15px; background: white; margin-bottom: 10px; border-radius: 18px; max-width: 70%; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; cursor: pointer; transition: opacity 0.2s; }
-        #messages li:active { opacity: 0.7; }
+        #messages li { padding: 10px 15px; background: white; margin-bottom: 10px; border-radius: 18px; max-width: 70%; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; cursor: pointer; position: relative; }
         #messages img { max-width: 100%; border-radius: 10px; display: block; margin-top: 5px; }
         
         .replied-message { background: rgba(0,0,0,0.05); border-left: 3px solid #0088cc; padding: 5px 10px; border-radius: 4px; font-size: 0.85em; color: #555; margin-bottom: 5px; }
-        #reply-banner { display: none; background: #fff; padding: 10px 15px; border-top: 1px solid #ddd; font-size: 14px; color: #555; position: relative; align-items: center; justify-content: space-between; }
-        #cancel-reply { cursor: pointer; color: #ff3b30; font-weight: bold; padding: 5px; }
+        #reply-banner { display: none; background: #fff; padding: 10px 15px; border-top: 1px solid #ddd; font-size: 14px; color: #555; align-items: center; justify-content: space-between; }
         #typing-indicator { display: none; padding: 0 15px 10px 15px; font-size: 13px; color: #888; font-style: italic; }
 
         .controls { background: white; padding: 10px; display: flex; align-items: center; border-top: 1px solid #ddd; }
         input[type="text"] { flex-grow: 1; border: 1px solid #ddd; padding: 12px; border-radius: 25px; outline: none; }
         .file-btn { margin-right: 10px; cursor: pointer; font-size: 24px; color: #888; }
         #file-input { display: none; }
-        button { background: #0088cc; color: white; border: none; padding: 10px 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; }
+        button { background: #0088cc; color: white; border: none; padding: 10px 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
     <header>
-        <span>Чат</span>
+        <div class="header-left">
+            <span>Чат</span>
+            <span id="clear-btn" style="cursor:pointer; margin-left: 15px; font-size: 18px;" title="Очистить всё">🗑️</span>
+        </div>
         <div class="status-container">
             <div id="status-dot" class="status-dot"></div>
             <span id="status-text">не в сети</span>
@@ -55,7 +51,7 @@
     
     <div id="reply-banner">
         <span>Ответ на: <strong id="reply-text"></strong></span>
-        <span id="cancel-reply">✕</span>
+        <span id="cancel-reply" style="cursor:pointer; color:red; font-weight:bold;">✕</span>
     </div>
 
     <form class="controls" id="form">
@@ -68,48 +64,33 @@
     <script src="/socket.io/socket.io.js"></script>
 <script>
     const socket = io();
-    const form = document.getElementById('form');
-    const input = document.getElementById('input');
-    const fileInput = document.getElementById('file-input');
-    const messages = document.getElementById('messages');
-    const replyBanner = document.getElementById('reply-banner');
-    const replyText = document.getElementById('reply-text');
-    const cancelReplyBtn = document.getElementById('cancel-reply');
-    const typingIndicator = document.getElementById('typing-indicator');
-    const statusDot = document.getElementById('status-dot');
-    const statusText = document.getElementById('status-text');
+    const form = document.getElementById('form'), input = document.getElementById('input');
+    const fileInput = document.getElementById('file-input'), messages = document.getElementById('messages');
+    const replyBanner = document.getElementById('reply-banner'), replyText = document.getElementById('reply-text');
+    const cancelReplyBtn = document.getElementById('cancel-reply'), typingIndicator = document.getElementById('typing-indicator');
+    const statusDot = document.getElementById('status-dot'), statusText = document.getElementById('status-text'), clearBtn = document.getElementById('clear-btn');
 
     const notifySound = new Audio('/notify.mp3');
 
-    let myId = localStorage.getItem('chat_id');
-    if (!myId) {
-        myId = Math.random().toString(36).substring(2);
-        localStorage.setItem('chat_id', myId);
-    }
+    let myId = localStorage.getItem('chat_id') || Math.random().toString(36).substring(2);
+    localStorage.setItem('chat_id', myId);
 
     let currentReplyTo = null;
 
-    // Логика онлайн-статуса
+    // Онлайн-статус
     socket.on('user status', (status) => {
-        if (status === 'online') {
-            statusDot.classList.add('online');
-            statusText.textContent = 'в сети';
-        } else {
-            statusDot.classList.remove('online');
-            statusText.textContent = 'не в сети';
-        }
+        const isOnline = status === 'online';
+        statusDot.classList.toggle('online', isOnline);
+        statusText.textContent = isOnline ? 'в сети' : 'не в сети';
     });
 
     function renderMessage(data) {
         const item = document.createElement('li');
-        if (data.clientId === myId) {
-            item.style.backgroundColor = '#dcf8c6';
-            item.style.alignSelf = 'flex-end';
-        } else {
-            item.style.backgroundColor = '#ffffff';
-            item.style.alignSelf = 'flex-start';
-            notifySound.play().catch(() => {}); 
-        }
+        const isMine = data.clientId === myId;
+        item.style.backgroundColor = isMine ? '#dcf8c6' : '#ffffff';
+        item.style.alignSelf = isMine ? 'flex-end' : 'flex-start';
+        
+        if (!isMine) notifySound.play().catch(() => {}); 
 
         if (data.replyTo) {
             const replyDiv = document.createElement('div');
@@ -119,82 +100,63 @@
         }
 
         if (data.type === 'text') {
-            const textNode = document.createTextNode(data.content);
-            item.appendChild(textNode);
-        } else if (data.type === 'image') {
+            item.appendChild(document.createTextNode(data.content));
+        } else {
             const img = document.createElement('img');
             img.src = data.content;
             item.appendChild(img);
         }
         
-        item.addEventListener('click', () => {
+        item.onclick = () => {
             currentReplyTo = data.type === 'text' ? data.content : '[Фотография]';
             replyText.textContent = currentReplyTo;
             replyBanner.style.display = 'flex';
             input.focus();
-        });
+        };
 
         messages.appendChild(item);
         messages.scrollTop = messages.scrollHeight;
     }
 
-    cancelReplyBtn.addEventListener('click', () => {
-        currentReplyTo = null;
-        replyBanner.style.display = 'none';
-    });
-
-    socket.on('load history', (history) => {
-        messages.innerHTML = '';
-        history.forEach(renderMessage);
-    });
-
+    // События
+    socket.on('load history', (history) => { messages.innerHTML = ''; history.forEach(renderMessage); });
     socket.on('chat message', renderMessage);
+    socket.on('chat cleared', () => { messages.innerHTML = ''; });
+    
+    clearBtn.onclick = () => { if(confirm('Удалить всю историю?')) socket.emit('clear chat'); };
+    cancelReplyBtn.onclick = () => { currentReplyTo = null; replyBanner.style.display = 'none'; };
 
+    // Печатает...
     let typingTimeout;
-    input.addEventListener('input', () => {
+    input.oninput = () => {
         socket.emit('typing');
         clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => {
-            socket.emit('stop typing');
-        }, 1000);
-    });
+        typingTimeout = setTimeout(() => socket.emit('stop typing'), 1000);
+    };
+    socket.on('typing', () => { typingIndicator.style.display = 'block'; messages.scrollTop = messages.scrollHeight; });
+    socket.on('stop typing', () => typingIndicator.style.display = 'none');
 
-    socket.on('typing', () => {
-        typingIndicator.style.display = 'block';
-        messages.scrollTop = messages.scrollHeight;
-    });
-
-    socket.on('stop typing', () => {
-        typingIndicator.style.display = 'none';
-    });
-
-    form.addEventListener('submit', (e) => {
+    // Отправка
+    form.onsubmit = (e) => {
         e.preventDefault();
         if (input.value) {
-            socket.emit('chat message', { 
-                type: 'text', content: input.value, clientId: myId, replyTo: currentReplyTo 
-            });
+            socket.emit('chat message', { type: 'text', content: input.value, clientId: myId, replyTo: currentReplyTo });
+            input.value = ''; currentReplyTo = null; replyBanner.style.display = 'none';
             socket.emit('stop typing');
-            input.value = '';
-            currentReplyTo = null;
-            replyBanner.style.display = 'none';
         }
-    });
+    };
 
-    fileInput.addEventListener('change', (e) => {
+    fileInput.onchange = (e) => {
         const file = e.target.files[0];
         if (file) {
             const reader = new FileReader();
-            reader.onload = (event) => {
-                socket.emit('chat message', { 
-                    type: 'image', content: event.target.result, clientId: myId, replyTo: currentReplyTo
-                });
-                currentReplyTo = null;
-                replyBanner.style.display = 'none';
+            reader.onload = (ev) => {
+                socket.emit('chat message', { type: 'image', content: ev.target.result, clientId: myId, replyTo: currentReplyTo });
+                currentReplyTo = null; replyBanner.style.display = 'none';
             };
             reader.readAsDataURL(file);
         }
-    });
+    };
 </script>
 </body>
 </html>

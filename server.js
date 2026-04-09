@@ -7,14 +7,16 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { 
-    maxHttpBufferSize: 1e7, 
+    maxHttpBufferSize: 1e7, // Лимит 10мб для передачи фото
     cors: { origin: "*" } 
 });
 
+// Подключение к MongoDB
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('База данных MongoDB подключена!'))
   .catch(err => console.log('Ошибка подключения к БД:', err));
 
+// Схема сообщения
 const messageSchema = new mongoose.Schema({
   type: String,
   content: String,
@@ -24,6 +26,7 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', messageSchema);
 
+// Функция автоочистки (лимит 500 сообщений)
 async function cleanupDatabase() {
     try {
         const count = await Message.countDocuments();
@@ -31,7 +34,7 @@ async function cleanupDatabase() {
             const oldest = await Message.find().sort({timestamp: 1}).limit(50);
             const idsToDelete = oldest.map(m => m._id);
             await Message.deleteMany({ _id: { $in: idsToDelete } });
-            console.log('--- База почищена (удалено 50 старых сообщений) ---');
+            console.log('--- Авто-очистка: удалено 50 старых сообщений ---');
         }
     } catch (err) {
         console.error('Ошибка при очистке БД:', err);
@@ -41,14 +44,13 @@ async function cleanupDatabase() {
 app.use(express.static('public'));
 
 io.on('connection', async (socket) => {
-    // 1. Уведомляем собеседника, что мы зашли
+    // Уведомляем собеседника об онлайн-статусе
     socket.broadcast.emit('user status', 'online');
-
-    // 2. Если в чате уже кто-то есть, помечаем его как "онлайн" для текущего пользователя
     if (io.engine.clientsCount > 1) {
         socket.emit('user status', 'online');
     }
 
+    // Загрузка истории
     try {
         const history = await Message.find().sort({timestamp: 1}).limit(100);
         socket.emit('load history', history);
@@ -56,19 +58,14 @@ io.on('connection', async (socket) => {
         console.error('Ошибка загрузки истории:', err);
     }
 
-    socket.on('typing', () => {
-        socket.broadcast.emit('typing');
-    });
+    // Индикатор печати
+    socket.on('typing', () => socket.broadcast.emit('typing'));
+    socket.on('stop typing', () => socket.broadcast.emit('stop typing'));
 
-    socket.on('stop typing', () => {
-        socket.broadcast.emit('stop typing');
-    });
+    // Статус "не в сети" при выходе
+    socket.on('disconnect', () => socket.broadcast.emit('user status', 'offline'));
 
-    // 3. Уведомляем об уходе пользователя
-    socket.on('disconnect', () => {
-        socket.broadcast.emit('user status', 'offline');
-    });
-
+    // Обработка сообщения
     socket.on('chat message', async (data) => {
         try {
             await cleanupDatabase();
@@ -84,7 +81,17 @@ io.on('connection', async (socket) => {
             console.error('Ошибка сохранения:', err);
         }
     });
+
+    // Полная очистка чата вручную
+    socket.on('clear chat', async () => {
+        try {
+            await Message.deleteMany({});
+            io.emit('chat cleared');
+        } catch (err) {
+            console.error('Ошибка при ручной очистке:', err);
+        }
+    });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Сервер летит на порту ${PORT}`));
+server.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
