@@ -50,7 +50,8 @@ io.on('connection', async (socket) => {
     }
 
     try {
-        const history = await Message.find().sort({timestamp: 1}).limit(100);
+        const history = await Message.find().sort({timestamp: -1}).limit(100);
+socket.emit('load history', history.reverse());
         socket.emit('load history', history);
     } catch (err) {
         console.error('Ошибка загрузки истории:', err);
