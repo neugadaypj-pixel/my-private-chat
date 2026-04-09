@@ -41,6 +41,14 @@ async function cleanupDatabase() {
 app.use(express.static('public'));
 
 io.on('connection', async (socket) => {
+    // 1. Уведомляем собеседника, что мы зашли
+    socket.broadcast.emit('user status', 'online');
+
+    // 2. Если в чате уже кто-то есть, помечаем его как "онлайн" для текущего пользователя
+    if (io.engine.clientsCount > 1) {
+        socket.emit('user status', 'online');
+    }
+
     try {
         const history = await Message.find().sort({timestamp: 1}).limit(100);
         socket.emit('load history', history);
@@ -48,19 +56,22 @@ io.on('connection', async (socket) => {
         console.error('Ошибка загрузки истории:', err);
     }
 
-    // Обработка индикатора печати
     socket.on('typing', () => {
-        socket.broadcast.emit('typing'); // Отправляем всем, кроме того, кто печатает
+        socket.broadcast.emit('typing');
     });
 
     socket.on('stop typing', () => {
         socket.broadcast.emit('stop typing');
     });
 
+    // 3. Уведомляем об уходе пользователя
+    socket.on('disconnect', () => {
+        socket.broadcast.emit('user status', 'offline');
+    });
+
     socket.on('chat message', async (data) => {
         try {
             await cleanupDatabase();
-
             const newMsg = new Message({ 
                 type: data.type, 
                 content: data.content,
@@ -68,7 +79,6 @@ io.on('connection', async (socket) => {
                 replyTo: data.replyTo 
             });
             await newMsg.save();
-            
             io.emit('chat message', data);
         } catch (err) {
             console.error('Ошибка сохранения:', err);
