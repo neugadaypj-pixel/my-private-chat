@@ -6,9 +6,20 @@
     <style>
         body { font-family: -apple-system, sans-serif; background: #e6ebee; margin: 0; height: 100vh; display: flex; flex-direction: column; }
         #messages { list-style-type: none; padding: 15px; margin: 0; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; }
-        #messages li { padding: 10px 15px; background: white; margin-bottom: 10px; border-radius: 18px; max-width: 70%; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; }
-        #messages img { max-width: 100%; border-radius: 10px; display: block; }
+        #messages li { padding: 10px 15px; background: white; margin-bottom: 10px; border-radius: 18px; max-width: 70%; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; cursor: pointer; transition: opacity 0.2s; }
+        #messages li:active { opacity: 0.7; }
+        #messages img { max-width: 100%; border-radius: 10px; display: block; margin-top: 5px; }
         
+        /* Стили для блока ответа внутри сообщения */
+        .replied-message { background: rgba(0,0,0,0.05); border-left: 3px solid #0088cc; padding: 5px 10px; border-radius: 4px; font-size: 0.85em; color: #555; margin-bottom: 5px; }
+        
+        /* Стили для панели "Ответ на..." над полем ввода */
+        #reply-banner { display: none; background: #fff; padding: 10px 15px; border-top: 1px solid #ddd; font-size: 14px; color: #555; position: relative; align-items: center; justify-content: space-between; }
+        #cancel-reply { cursor: pointer; color: #ff3b30; font-weight: bold; padding: 5px; }
+        
+        /* Индикатор печати */
+        #typing-indicator { display: none; padding: 0 15px 10px 15px; font-size: 13px; color: #888; font-style: italic; }
+
         .controls { background: white; padding: 10px; display: flex; align-items: center; border-top: 1px solid #ddd; }
         input[type="text"] { flex-grow: 1; border: 1px solid #ddd; padding: 12px; border-radius: 25px; outline: none; }
         .file-btn { margin-right: 10px; cursor: pointer; font-size: 24px; color: #888; }
@@ -18,7 +29,13 @@
 </head>
 <body>
     <ul id="messages"></ul>
+    <div id="typing-indicator">Кто-то печатает...</div>
     
+    <div id="reply-banner">
+        <span>Ответ на: <strong id="reply-text"></strong></span>
+        <span id="cancel-reply">✕</span>
+    </div>
+
     <form class="controls" id="form">
         <label class="file-btn" for="file-input">📎</label>
         <input type="file" id="file-input" accept="image/*">
@@ -34,37 +51,72 @@
     const input = document.getElementById('input');
     const fileInput = document.getElementById('file-input');
     const messages = document.getElementById('messages');
+    
+    const replyBanner = document.getElementById('reply-banner');
+    const replyText = document.getElementById('reply-text');
+    const cancelReplyBtn = document.getElementById('cancel-reply');
+    const typingIndicator = document.getElementById('typing-indicator');
 
-    // 1. Генерируем уникальный ID для этого браузера и сохраняем его
+    // Аудио для уведомлений (нужно добавить файл notify.mp3 в папку public)
+    const notifySound = new Audio('/notify.mp3');
+
     let myId = localStorage.getItem('chat_id');
     if (!myId) {
         myId = Math.random().toString(36).substring(2);
         localStorage.setItem('chat_id', myId);
     }
 
-    // 2. Обновляем функцию отрисовки сообщений
+    let currentReplyTo = null; // Хранит текст сообщения, на которое отвечаем
+
     function renderMessage(data) {
         const item = document.createElement('li');
         
-        // Проверяем: если ID из сообщения совпадает с моим — это моё сообщение
         if (data.clientId === myId) {
-            item.style.backgroundColor = '#dcf8c6'; // Светло-зеленый (как в WhatsApp)
-            item.style.alignSelf = 'flex-end'; // Прижимаем вправо
+            item.style.backgroundColor = '#dcf8c6';
+            item.style.alignSelf = 'flex-end';
         } else {
-            item.style.backgroundColor = '#ffffff'; // Белый
-            item.style.alignSelf = 'flex-start'; // Прижимаем влево
+            item.style.backgroundColor = '#ffffff';
+            item.style.alignSelf = 'flex-start';
+            
+            // Проигрываем звук, если это чужое сообщение (и игнорируем ошибку автовоспроизведения браузера)
+            notifySound.play().catch(() => {}); 
         }
 
+        // Если это ответ на другое сообщение, рисуем блок с цитатой
+        if (data.replyTo) {
+            const replyDiv = document.createElement('div');
+            replyDiv.className = 'replied-message';
+            replyDiv.textContent = data.replyTo;
+            item.appendChild(replyDiv);
+        }
+
+        // Рендер текста или картинки
         if (data.type === 'text') {
-            item.textContent = data.content;
+            const textNode = document.createTextNode(data.content);
+            item.appendChild(textNode);
         } else if (data.type === 'image') {
             const img = document.createElement('img');
             img.src = data.content;
             item.appendChild(img);
         }
+        
+        // Клик по сообщению для ответа
+        item.addEventListener('click', () => {
+            currentReplyTo = data.type === 'text' ? data.content : '[Фотография]';
+            replyText.textContent = currentReplyTo;
+            replyBanner.style.display = 'flex';
+            input.focus();
+        });
+
         messages.appendChild(item);
         messages.scrollTop = messages.scrollHeight;
     }
+
+    // Отмена ответа
+    cancelReplyBtn.addEventListener('click', () => {
+        currentReplyTo = null;
+        replyBanner.style.display = 'none';
+    });
 
     socket.on('load history', (history) => {
         messages.innerHTML = '';
@@ -73,22 +125,57 @@
 
     socket.on('chat message', renderMessage);
 
-    // 3. Отправляем свой ID вместе с текстом
+    // Логика "печатает..."
+    let typingTimeout;
+    input.addEventListener('input', () => {
+        socket.emit('typing');
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+            socket.emit('stop typing');
+        }, 1000); // Индикатор пропадет через 1 секунду после остановки ввода
+    });
+
+    socket.on('typing', () => {
+        typingIndicator.style.display = 'block';
+        messages.scrollTop = messages.scrollHeight;
+    });
+
+    socket.on('stop typing', () => {
+        typingIndicator.style.display = 'none';
+    });
+
+    // Отправка текста
     form.addEventListener('submit', (e) => {
         e.preventDefault();
         if (input.value) {
-            socket.emit('chat message', { type: 'text', content: input.value, clientId: myId });
+            socket.emit('chat message', { 
+                type: 'text', 
+                content: input.value, 
+                clientId: myId,
+                replyTo: currentReplyTo 
+            });
+            socket.emit('stop typing'); // Сразу убираем индикатор
+            
             input.value = '';
+            currentReplyTo = null;
+            replyBanner.style.display = 'none';
         }
     });
 
-    // 4. Отправляем свой ID вместе с фото
+    // Отправка фото
     fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
             const reader = new FileReader();
             reader.onload = (event) => {
-                socket.emit('chat message', { type: 'image', content: event.target.result, clientId: myId });
+                socket.emit('chat message', { 
+                    type: 'image', 
+                    content: event.target.result, 
+                    clientId: myId,
+                    replyTo: currentReplyTo
+                });
+                currentReplyTo = null;
+                replyBanner.style.display = 'none';
             };
             reader.readAsDataURL(file);
         }
