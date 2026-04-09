@@ -7,51 +7,71 @@ const mongoose = require('mongoose');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { 
-    maxHttpBufferSize: 1e7, // 10MB для картинок
+    maxHttpBufferSize: 1e7, 
     cors: { origin: "*" } 
 });
 
-// 1. Подключение к MongoDB
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('База данных MongoDB подключена!'))
   .catch(err => console.log('Ошибка подключения к БД:', err));
 
-// 2. Схема сообщения ( clientId ОБЯЗАТЕЛЕН )
 const messageSchema = new mongoose.Schema({
   type: String,
   content: String,
-  clientId: String, // Вот это поле отвечает за цвет сообщений
+  clientId: String,
+  replyTo: String, 
   timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
 
+async function cleanupDatabase() {
+    try {
+        const count = await Message.countDocuments();
+        if (count > 500) {
+            const oldest = await Message.find().sort({timestamp: 1}).limit(50);
+            const idsToDelete = oldest.map(m => m._id);
+            await Message.deleteMany({ _id: { $in: idsToDelete } });
+            console.log('--- База почищена (удалено 50 старых сообщений) ---');
+        }
+    } catch (err) {
+        console.error('Ошибка при очистке БД:', err);
+    }
+}
+
 app.use(express.static('public'));
 
 io.on('connection', async (socket) => {
-    // 3. Загрузка истории
     try {
-        // Находим сообщения и убеждаемся, что clientId передается
         const history = await Message.find().sort({timestamp: 1}).limit(100);
         socket.emit('load history', history);
     } catch (err) {
         console.error('Ошибка загрузки истории:', err);
     }
 
-    // 4. Получение нового сообщения
+    // Обработка индикатора печати
+    socket.on('typing', () => {
+        socket.broadcast.emit('typing'); // Отправляем всем, кроме того, кто печатает
+    });
+
+    socket.on('stop typing', () => {
+        socket.broadcast.emit('stop typing');
+    });
+
     socket.on('chat message', async (data) => {
         try {
-            // Сохраняем в базу ВСЕ данные, включая clientId
+            await cleanupDatabase();
+
             const newMsg = new Message({ 
                 type: data.type, 
                 content: data.content,
-                clientId: data.clientId 
+                clientId: data.clientId,
+                replyTo: data.replyTo 
             });
             await newMsg.save();
             
-            // Отправляем всем сообщение в реальном времени
             io.emit('chat message', data);
         } catch (err) {
-            console.error('Ошибка сохранения сообщения:', err);
+            console.error('Ошибка сохранения:', err);
         }
     });
 });
