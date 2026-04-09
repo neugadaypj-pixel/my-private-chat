@@ -6,7 +6,6 @@
     <style>
         body { font-family: -apple-system, sans-serif; background: #e6ebee; margin: 0; height: 100vh; display: flex; flex-direction: column; }
         
-        /* Стили для шапки и статуса */
         header { 
             background: #0088cc; 
             color: white; 
@@ -17,12 +16,17 @@
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
             z-index: 10;
         }
+        .header-right { display: flex; align-items: center; gap: 15px; }
         .status-container { display: flex; align-items: center; font-size: 14px; }
         .status-dot { 
             width: 10px; height: 10px; background: #bbb; 
             border-radius: 50%; margin-right: 8px; transition: background 0.3s; 
         }
         .status-dot.online { background: #4cd137; box-shadow: 0 0 5px #4cd137; }
+        
+        /* Стили для новой кнопки */
+        #clear-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s; }
+        #clear-btn:hover { background: rgba(255,0,0,0.8); }
 
         #messages { list-style-type: none; padding: 15px; margin: 0; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; }
         #messages li { padding: 10px 15px; background: white; margin-bottom: 10px; border-radius: 18px; max-width: 70%; box-shadow: 0 1px 2px rgba(0,0,0,0.1); word-wrap: break-word; cursor: pointer; transition: opacity 0.2s; }
@@ -38,15 +42,18 @@
         input[type="text"] { flex-grow: 1; border: 1px solid #ddd; padding: 12px; border-radius: 25px; outline: none; }
         .file-btn { margin-right: 10px; cursor: pointer; font-size: 24px; color: #888; }
         #file-input { display: none; }
-        button { background: #0088cc; color: white; border: none; padding: 10px 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; }
+        button { background: #0088cc; color: white; border: none; padding: 10px 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
     <header>
         <span>Чат</span>
-        <div class="status-container">
-            <div id="status-dot" class="status-dot"></div>
-            <span id="status-text">не в сети</span>
+        <div class="header-right">
+            <div class="status-container">
+                <div id="status-dot" class="status-dot"></div>
+                <span id="status-text">не в сети</span>
+            </div>
+            <button id="clear-btn">🗑️ Очистить</button>
         </div>
     </header>
 
@@ -62,7 +69,7 @@
         <label class="file-btn" for="file-input">📎</label>
         <input type="file" id="file-input" accept="image/*">
         <input id="input" type="text" autocomplete="off" placeholder="Сообщение...">
-        <button>➤</button>
+        <button type="submit">➤</button>
     </form>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -78,6 +85,7 @@
     const typingIndicator = document.getElementById('typing-indicator');
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
+    const clearBtn = document.getElementById('clear-btn');
 
     const notifySound = new Audio('/notify.mp3');
 
@@ -89,7 +97,6 @@
 
     let currentReplyTo = null;
 
-    // Логика онлайн-статуса
     socket.on('user status', (status) => {
         if (status === 'online') {
             statusDot.classList.add('online');
@@ -149,6 +156,18 @@
     });
 
     socket.on('chat message', renderMessage);
+
+    // Логика кнопки очистки
+    clearBtn.addEventListener('click', () => {
+        if(confirm('Точно удалить всю переписку? Это действие нельзя отменить!')) {
+            socket.emit('clear chat');
+        }
+    });
+
+    // Очищаем экран, когда пришел сигнал от сервера
+    socket.on('chat cleared', () => {
+        messages.innerHTML = '';
+    });
 
     let typingTimeout;
     input.addEventListener('input', () => {

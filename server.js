@@ -41,21 +41,45 @@ async function cleanupDatabase() {
 app.use(express.static('public'));
 
 io.on('connection', async (socket) => {
-    // 1. Уведомляем собеседника, что мы зашли
-    socket.broadcast.emit('user status', 'online');
+    console.log('Пользователь подключился');
 
-    // 2. Если в чате уже кто-то есть, помечаем его как "онлайн" для текущего пользователя
+    socket.broadcast.emit('user status', 'online');
     if (io.engine.clientsCount > 1) {
         socket.emit('user status', 'online');
     }
 
     try {
         const history = await Message.find().sort({timestamp: -1}).limit(100);
-socket.emit('load history', history.reverse());
-        socket.emit('load history', history);
+        socket.emit('load history', [...history].reverse()); 
     } catch (err) {
-        console.error('Ошибка загрузки истории:', err);
+        console.error('Ошибка истории:', err);
     }
+
+    // НОВАЯ ФУНКЦИЯ: Очистка всего чата
+    socket.on('clear chat', async () => {
+        try {
+            await Message.deleteMany({}); // Удаляем абсолютно всё из базы
+            io.emit('chat cleared'); // Говорим всем браузерам очистить экран
+            console.log('--- База данных полностью очищена пользователем ---');
+        } catch (err) {
+            console.error('Ошибка при полной очистке чата:', err);
+        }
+    });
+
+    socket.on('chat message', async (data) => {
+        try {
+            const newMsg = new Message({ 
+                type: data.type, 
+                content: data.content,
+                clientId: data.clientId,
+                replyTo: data.replyTo 
+            });
+            await newMsg.save();
+            io.emit('chat message', newMsg); 
+        } catch (err) {
+            console.error('Ошибка сохранения:', err);
+        }
+    });
 
     socket.on('typing', () => {
         socket.broadcast.emit('typing');
@@ -65,24 +89,9 @@ socket.emit('load history', history.reverse());
         socket.broadcast.emit('stop typing');
     });
 
-    // 3. Уведомляем об уходе пользователя
     socket.on('disconnect', () => {
-        socket.broadcast.emit('user status', 'offline');
-    });
-
-    socket.on('chat message', async (data) => {
-        try {
-            await cleanupDatabase();
-            const newMsg = new Message({ 
-                type: data.type, 
-                content: data.content,
-                clientId: data.clientId,
-                replyTo: data.replyTo 
-            });
-            await newMsg.save();
-            io.emit('chat message', data);
-        } catch (err) {
-            console.error('Ошибка сохранения:', err);
+        if (io.engine.clientsCount === 0) {
+            socket.broadcast.emit('user status', 'offline');
         }
     });
 });
